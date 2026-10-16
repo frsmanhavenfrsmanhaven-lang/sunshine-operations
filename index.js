@@ -1,4 +1,7 @@
+
 require("dotenv").config();
+
+const express = require("express");
 
 const {
   Client,
@@ -30,7 +33,7 @@ const {
 
 // =====================================================
 // SUNSHINE ROLEPLAY
-// Single-file bot with moderation, tickets and priorities
+// Discord bot + Render-compatible web server
 // =====================================================
 
 const config = process.env;
@@ -39,9 +42,89 @@ const BRAND = "Sunshine Roleplay";
 const V2 = MessageFlags.IsComponentsV2;
 const EPHEMERAL = MessageFlags.Ephemeral;
 
+const app = express();
+const PORT = Number(config.PORT) || 3000;
+
+app.disable("x-powered-by");
+
+app.get("/", (req, res) => {
+  res.status(200).send(`
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <title>Sunshine Roleplay</title>
+      <style>
+        * { box-sizing: border-box; }
+        body {
+          margin: 0;
+          min-height: 100vh;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: #0b1020;
+          color: #f4f7ff;
+          font-family: Arial, sans-serif;
+          padding: 24px;
+        }
+        main {
+          max-width: 620px;
+          width: 100%;
+          text-align: center;
+          background: #141c30;
+          border: 1px solid #273552;
+          border-radius: 18px;
+          padding: 40px 28px;
+        }
+        h1 { margin: 0 0 12px; font-size: 32px; }
+        p { color: #b8c4dc; line-height: 1.7; }
+        .status {
+          display: inline-block;
+          margin-top: 12px;
+          padding: 9px 14px;
+          border-radius: 8px;
+          background: #173d30;
+          color: #8af0bc;
+        }
+        footer { margin-top: 28px; color: #8492ad; font-size: 12px; }
+      </style>
+    </head>
+    <body>
+      <main>
+        <h1>Sunshine Roleplay</h1>
+        <p>Official bot service page.</p>
+        <div class="status">Web service is responding</div>
+        <p>This page confirms that the Sunshine Roleplay web service is running.
+        Discord bot availability is monitored separately.</p>
+        <footer>Sunshine Roleplay</footer>
+      </main>
+    </body>
+    </html>
+  `);
+});
+
+app.get("/health", (req, res) => {
+  res.status(200).json({
+    service: BRAND,
+    web: "online",
+    bot: client?.isReady() ? "online" : "starting",
+    uptimeSeconds: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString()
+  });
+});
+
+const webServer = app.listen(PORT, "0.0.0.0", () => {
+  console.log(`${BRAND} web server listening on port ${PORT}`);
+});
+
+webServer.on("error", error => {
+  console.error("Web server error:", error);
+});
+
 for (const key of ["DISCORD_TOKEN", "CLIENT_ID", "GUILD_ID"]) {
   if (!config[key]) {
-    console.error(`Missing ${key} in .env`);
+    console.error(`Missing ${key} in environment variables`);
     process.exit(1);
   }
 }
@@ -244,8 +327,6 @@ const commands = [
         .setMaxLength(3500).setRequired(true))
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
 
-  // MODERATION COMMANDS
-
   new SlashCommandBuilder()
     .setName("kick")
     .setDescription("Kick a member from the server.")
@@ -419,7 +500,7 @@ client.on("guildMemberAdd", async member => {
     member.guild,
     config.WELCOME_CHANNEL_ID,
     "Welcome to Sunshine Roleplay!",
-    `**Hey! Welcome to ${emoji}*Sunshine Roleplay!* Hope you enjoy and stay!**\n\nWelcome, ${member}!`
+    `Hey! Welcome to ${emoji}Sunshine Roleplay! Hope you enjoy and stay!\n\nWelcome, ${member}!`
   );
 
   await log(
@@ -533,7 +614,6 @@ client.on("messageCreate", async message => {
   const content = message.content.trim();
   const lower = content.toLowerCase();
 
-  // ---------------- !say ----------------
   const sayCommand = `${PREFIX}say`;
   const isSay = lower.startsWith(sayCommand.toLowerCase());
 
@@ -561,9 +641,6 @@ client.on("messageCreate", async message => {
     return;
   }
 
-  // ---------------- !dm ----------------
-  // Usage: !dm @user Your private message
-  // Also accepts: !dm USER_ID Your private message
   const dmCommand = `${PREFIX}dm`;
   const isDM = lower.startsWith(dmCommand.toLowerCase());
 
@@ -580,19 +657,15 @@ client.on("messageCreate", async message => {
     if (!args) {
       return message.reply(
         `**Usage:** \`${PREFIX}dm @user Your message here\`\n` +
-        `You can also use a Discord user ID.`
+        "You can also use a Discord user ID."
       );
     }
 
-    // Prefer a mentioned user. If none is mentioned, read the first argument as an ID.
     let target = message.mentions.users.first();
     let dmText = "";
 
     if (target) {
-      // Remove the first mention from the message to get the text.
-      dmText = args
-        .replace(/<@!?\d{17,20}>/, "")
-        .trim();
+      dmText = args.replace(/<@!?\d{17,20}>/, "").trim();
     } else {
       const parts = args.match(/^(\d{17,20})\s+([\s\S]+)$/);
 
@@ -606,7 +679,7 @@ client.on("messageCreate", async message => {
       } else {
         return message.reply(
           `**Usage:** \`${PREFIX}dm @user Your message here\`\n` +
-          `You can also use a Discord user ID.`
+          "You can also use a Discord user ID."
         );
       }
     }
@@ -632,17 +705,19 @@ client.on("messageCreate", async message => {
       `${clean(dmText, 1800)}\n\n` +
       `*Sent by ${message.author.tag} on behalf of Sunshine Roleplay staff.*`;
 
+    let delivered = false;
+
     try {
       await target.send({ content: privateMessage });
+      delivered = true;
 
-      // Log who sent the DM, but do not copy the private message into a public channel.
       await log(
         message.guild,
         "Staff Direct Message Sent",
         `**Recipient:** ${target.tag} (${target.id})\n` +
         `**Sent By:** ${message.author.tag} (${message.author.id})\n` +
         `**Channel:** <#${message.channel.id}>\n` +
-        `**Status:** Delivered`
+        "**Status:** Delivered"
       );
 
       await message.reply(`Successfully sent a direct message to **${target.tag}**.`);
@@ -651,7 +726,9 @@ client.on("messageCreate", async message => {
       console.error("DM command error:", error.message);
 
       await message.reply(
-        "I couldn't send that DM. The user's privacy settings may block direct messages."
+        delivered
+          ? "The DM was delivered, but I had a problem completing the logging or confirmation."
+          : "I couldn't send that DM. The user's privacy settings may block direct messages."
       ).catch(() => {});
     }
   }
@@ -717,7 +794,7 @@ async function activatePriority(interaction, scene, location) {
     return respond(
       interaction,
       "Voice Channel Not Configured",
-      "Set VOICE_CHANNEL_ID in your .env before activating priorities."
+      "Set VOICE_CHANNEL_ID in your environment variables before activating priorities."
     );
   }
 
@@ -793,7 +870,7 @@ async function activatePriority(interaction, scene, location) {
     return respond(
       interaction,
       "Priority Partially Failed",
-      "The priority could not be fully activated. Check the terminal and voice-channel permissions."
+      "The priority could not be fully activated. Check the logs and voice-channel permissions."
     );
   }
 }
@@ -1050,7 +1127,6 @@ client.on("interactionCreate", async interaction => {
 
     const name = interaction.commandName;
 
-    // ---------------- HELP ----------------
     if (name === "help") {
       return respond(
         interaction,
@@ -1081,7 +1157,6 @@ client.on("interactionCreate", async interaction => {
       );
     }
 
-    // ---------------- TICKET PANEL ----------------
     if (name === "ticketpanel") {
       if (!interaction.memberPermissions.has(PermissionFlagsBits.ManageGuild)) {
         return respond(interaction, "Access Denied", "Manage Server permission required.");
@@ -1098,7 +1173,6 @@ client.on("interactionCreate", async interaction => {
       return respond(interaction, "Panel Posted", `Sent to <#${channel.id}>.`);
     }
 
-    // ---------------- FEEDBACK ----------------
     if (name === "feedback") {
       const staff = interaction.options.getUser("staff");
       const rating = interaction.options.getInteger("rating");
@@ -1121,7 +1195,6 @@ client.on("interactionCreate", async interaction => {
       return respond(interaction, "Feedback Submitted", "Thank you for your feedback.");
     }
 
-    // ---------------- APPLICATION RESULT ----------------
     if (name === "appresult") {
       if (!isAdmin(interaction.member)) {
         return respond(interaction, "Access Denied", "Admin role required.");
@@ -1149,8 +1222,6 @@ client.on("interactionCreate", async interaction => {
       return respond(interaction, "Result Recorded", `Application marked ${result}.`);
     }
 
-    // ---------------- PROMOTION ----------------
-    // Posts publicly in the channel where /promotion is run.
     if (name === "promotion") {
       if (!isAdmin(interaction.member)) {
         return respond(interaction, "Access Denied", "Admin role required.");
@@ -1191,7 +1262,6 @@ client.on("interactionCreate", async interaction => {
       );
     }
 
-    // ---------------- INFRACTION ----------------
     if (name === "infraction") {
       if (!isAdmin(interaction.member)) {
         return respond(interaction, "Access Denied", "Admin role required.");
@@ -1212,7 +1282,6 @@ client.on("interactionCreate", async interaction => {
       return respond(interaction, "Infraction Recorded", `Infraction recorded for ${staff}.`);
     }
 
-    // ---------------- SLASH SAY ----------------
     if (name === "say") {
       if (!interaction.memberPermissions.has(PermissionFlagsBits.ManageMessages)) {
         return respond(interaction, "Access Denied", "Manage Messages permission required.");
@@ -1224,9 +1293,6 @@ client.on("interactionCreate", async interaction => {
       return respond(interaction, "Message Sent", "Your message has been sent.");
     }
 
-    // =================================================
-    // MODERATION: KICK
-    // =================================================
     if (name === "kick") {
       const user = interaction.options.getUser("user");
       const reason = clean(interaction.options.getString("reason"), 1000);
@@ -1255,9 +1321,6 @@ client.on("interactionCreate", async interaction => {
       }
     }
 
-    // =================================================
-    // MODERATION: BAN
-    // =================================================
     if (name === "ban") {
       const user = interaction.options.getUser("user");
       const reason = clean(interaction.options.getString("reason"), 1000);
@@ -1272,10 +1335,8 @@ client.on("interactionCreate", async interaction => {
       if (target) {
         const check = botCanActOnMember(interaction, target, PermissionFlagsBits.BanMembers);
         if (!check.ok) return respond(interaction, "Ban Failed", check.message);
-      } else {
-        if (user.id === interaction.user.id || user.id === client.user.id) {
-          return respond(interaction, "Ban Failed", "You cannot ban yourself or the bot.");
-        }
+      } else if (user.id === interaction.user.id || user.id === client.user.id) {
+        return respond(interaction, "Ban Failed", "You cannot ban yourself or the bot.");
       }
 
       try {
@@ -1297,9 +1358,6 @@ client.on("interactionCreate", async interaction => {
       }
     }
 
-    // =================================================
-    // MODERATION: UNBAN
-    // =================================================
     if (name === "unban") {
       if (!interaction.memberPermissions.has(PermissionFlagsBits.BanMembers)) {
         return respond(interaction, "Access Denied", "You need Ban Members permission.");
@@ -1324,12 +1382,7 @@ client.on("interactionCreate", async interaction => {
           `Moderator: ${interaction.user.tag} | Reason: ${reason}`
         );
 
-        await moderationLog(
-          interaction,
-          "User Unbanned",
-          `${ban.user.tag} (${userId})`,
-          reason
-        );
+        await moderationLog(interaction, "User Unbanned", `${ban.user.tag} (${userId})`, reason);
 
         return respond(
           interaction,
@@ -1342,9 +1395,6 @@ client.on("interactionCreate", async interaction => {
       }
     }
 
-    // =================================================
-    // MODERATION: TIMEOUT
-    // =================================================
     if (name === "timeout") {
       const user = interaction.options.getUser("user");
       const minutes = interaction.options.getInteger("minutes");
@@ -1365,12 +1415,7 @@ client.on("interactionCreate", async interaction => {
           `Moderator: ${interaction.user.tag} | Reason: ${reason}`
         );
 
-        await moderationLog(
-          interaction,
-          `Timeout (${minutes} minutes)`,
-          `${user.tag} (${user.id})`,
-          reason
-        );
+        await moderationLog(interaction, `Timeout (${minutes} minutes)`, `${user.tag} (${user.id})`, reason);
 
         return respond(
           interaction,
@@ -1383,9 +1428,6 @@ client.on("interactionCreate", async interaction => {
       }
     }
 
-    // =================================================
-    // MODERATION: REMOVE TIMEOUT
-    // =================================================
     if (name === "untimeout") {
       const user = interaction.options.getUser("user");
       const reason = clean(interaction.options.getString("reason"), 1000);
@@ -1402,12 +1444,7 @@ client.on("interactionCreate", async interaction => {
       try {
         await target.timeout(null, `Moderator: ${interaction.user.tag} | Reason: ${reason}`);
 
-        await moderationLog(
-          interaction,
-          "Timeout Removed",
-          `${user.tag} (${user.id})`,
-          reason
-        );
+        await moderationLog(interaction, "Timeout Removed", `${user.tag} (${user.id})`, reason);
 
         return respond(
           interaction,
@@ -1420,9 +1457,6 @@ client.on("interactionCreate", async interaction => {
       }
     }
 
-    // =================================================
-    // MODERATION: PURGE
-    // =================================================
     if (name === "purge") {
       if (!interaction.memberPermissions.has(PermissionFlagsBits.ManageMessages)) {
         return respond(interaction, "Access Denied", "You need Manage Messages permission.");
@@ -1436,7 +1470,6 @@ client.on("interactionCreate", async interaction => {
       const amount = interaction.options.getInteger("amount");
 
       try {
-        // Discord bulk deletion cannot delete messages older than 14 days.
         const deleted = await interaction.channel.bulkDelete(amount, true);
 
         await log(
@@ -1459,9 +1492,6 @@ client.on("interactionCreate", async interaction => {
       }
     }
 
-    // =================================================
-    // MODERATION: WARN
-    // =================================================
     if (name === "warn") {
       const user = interaction.options.getUser("user");
       const reason = clean(interaction.options.getString("reason"), 1000);
@@ -1481,13 +1511,12 @@ client.on("interactionCreate", async interaction => {
       const key = `${interaction.guild.id}:${user.id}`;
       const records = warningRecords.get(key) || [];
 
-      const warning = {
+      records.push({
         reason,
         moderator: interaction.user.id,
         timestamp: Date.now()
-      };
+      });
 
-      records.push(warning);
       warningRecords.set(key, records);
 
       await user.send(
@@ -1512,7 +1541,7 @@ client.on("interactionCreate", async interaction => {
 
     if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
       await interaction.reply({
-        content: "An error occurred. Check the bot terminal.",
+        content: "An error occurred. Check the bot logs.",
         flags: EPHEMERAL
       }).catch(() => {});
     }
